@@ -26,6 +26,7 @@ src/
   config/    theme tokens, grid/hazard presets, bet ladder
   audio/     synthesized Web Audio cues (wood, brass, fuse, blast), safe fallback
   board/     React DOM grid + Canvas FX layer (dust, sparks, debris), hit-testing, animations
+    scene/   cosmetic character + FX scene (ADR-0006): pose/clips/animator (pure), rig, framing, gunslinger drawing
   ui/        HUD, drawers, modals, Provider Inspector, App composition
 ```
 
@@ -37,6 +38,9 @@ src/
 | `ui` | everything | — |
 
 ESLint enforces these rules (`eslint.config.js`). Do not disable them. Change them through an ADR.
+
+**Character/FX rule (ADR-0006):** the scene only *observes* game events. Never make the round machine wait on a
+character clip. The single sanctioned coupling is impact gating through `BoardPort.playReveal`, which has a fallback timeout.
 
 **Adding a spatial mode** (for example Plinko): create `src/engine/<mode>/` that reuses `core/machine` and
 `engine/spatial`, a `RoundProvider`-style port, a board under `src/board/<mode>/`, and register it in `src/config/modes.ts`.

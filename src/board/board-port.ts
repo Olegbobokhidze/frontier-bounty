@@ -1,48 +1,29 @@
 import { TIMINGS } from '../config/theme';
 import type { BoardPort } from '../engine/bounty/ports';
-import { cellCenter, type GridLayout } from '../engine/spatial/grid';
-import type { FxLayer } from './fx';
-
-export type BoardPortDeps = {
-  readonly fx: FxLayer;
-  readonly layout: () => GridLayout | null;
-  /** Web Animations shake of the board surface (compositor-only). */
-  readonly shake: (strength: number) => void;
-  readonly reducedMotion: boolean;
-};
+import type { Scene } from './scene/scene';
 
 export function revealTimings(turbo: boolean, reducedMotion: boolean): { safe: number; hazard: number } {
   return reducedMotion ? TIMINGS.reduced : turbo ? TIMINGS.turbo : TIMINGS.normal;
 }
 
 /**
- * Implements the engine's BoardPort: resolves when the CSS flip has finished, and fires
- * canvas FX at the flip's midpoint. React renders the cell faces from engine state.
+ * Implements the engine's BoardPort (contract unchanged, ADR-0004/0006). A reveal resolves only after
+ * the bullet has landed AND the flip has finished. The safe/boom reaction fires at the flip's midpoint,
+ * where the face becomes visible, so the FX, the character's reaction and the audio line up.
  */
-export function createBoardPort(d: BoardPortDeps): BoardPort {
+export function createBoardPort(scene: Scene, reducedMotion: boolean): BoardPort {
   const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   return {
     async playReveal(cell, outcome, { turbo }) {
-      const t = revealTimings(turbo, d.reducedMotion);
+      await scene.whenImpact(cell);
+      const t = revealTimings(turbo, reducedMotion);
       const ms = outcome === 'safe' ? t.safe : t.hazard;
-      setTimeout(() => {
-        const l = d.layout();
-        if (!l) return;
-        const c = cellCenter(l, cell);
-        const scale = l.cell / 96;
-        if (outcome === 'safe') d.fx.gold(c.x, c.y, scale);
-        else {
-          d.fx.blast(c.x, c.y, scale);
-          if (!d.reducedMotion) d.shake(Math.min(14, 6 + l.cell / 16));
-        }
-      }, ms * 0.45);
+      if (outcome === 'hazard') scene.lightFuse(cell);
+      setTimeout(() => (outcome === 'safe' ? scene.revealSafe(cell) : scene.boom(cell)), ms * 0.45);
       await wait(ms);
     },
     playSweep(outcome) {
-      const l = d.layout();
-      if (!l || outcome !== 'win') return;
-      const width = l.cols * l.cell + (l.cols - 1) * l.gap;
-      d.fx.coins(l.origin.x, l.origin.y, width);
+      if (outcome === 'win') scene.collect();
     },
   };
 }

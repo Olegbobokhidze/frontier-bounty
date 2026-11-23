@@ -9,7 +9,7 @@ import { FrontierSound } from '../audio/sound';
 import { CURRENCY, DEFAULT_PRESET_ID, findPreset, STARTING_PURSE } from '../config/presets';
 import { createSystemClock } from '../core/clock';
 import { createMoneyFormatter } from '../core/money';
-import type { FxLayer } from '../board/fx';
+import type { Scene } from '../board/scene/scene';
 import { BountyController } from '../engine/bounty/controller';
 import { DEFAULT_RULES, type RoundParams } from '../engine/bounty/rules';
 
@@ -35,7 +35,7 @@ export type Game = {
   readonly controller: BountyController;
   readonly provider: MockProvider;
   readonly sound: FrontierSound;
-  readonly fx: Holder<FxLayer | null>;
+  readonly scene: Holder<Scene | null>;
   readonly formatMoney: (minor: number) => string;
   readonly initialInspectorOpen: boolean;
 };
@@ -58,7 +58,7 @@ export function createGame(): Game {
     controller,
     provider,
     sound,
-    fx: createHolder<FxLayer | null>(null),
+    scene: createHolder<Scene | null>(null),
     formatMoney: createMoneyFormatter(CURRENCY),
     initialInspectorOpen: q.get('inspector') === '1',
   };

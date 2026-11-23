@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BoardView, type BoardReady } from '../board/BoardView';
 import { GAME_MODES } from '../config/modes';
+import { bindSceneSound } from './scene-sound';
 import { RoundState } from '../engine/bounty/machine';
 import { ErrorDialog } from './components/ErrorDialog';
 import { IconMute, IconScroll, IconSound, IconWrench } from './components/icons';
@@ -24,12 +25,16 @@ export function App() {
   const [inspectorOpen, setInspectorOpen] = useState(game.initialInspectorOpen);
   const [peek, setPeek] = useState(false);
 
+  // Board/scene attach: port to the engine, scene events to audio (cues land on the animation beats).
+  const offSceneAudio = useRef<(() => void) | null>(null);
   const onReady = useCallback(
     (ready: BoardReady | null) => {
       controller.attachBoard(ready?.port ?? null);
-      game.fx.set(ready?.fx ?? null);
+      game.scene.set(ready?.scene ?? null);
+      offSceneAudio.current?.();
+      offSceneAudio.current = ready ? bindSceneSound(ready.scene, sound) : null;
     },
-    [controller, game.fx],
+    [controller, game.scene, sound],
   );
   const onPick = useCallback((cell: number) => controller.pick(cell), [controller]);
 

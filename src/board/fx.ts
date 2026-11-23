@@ -1,11 +1,12 @@
 /**
- * Canvas 2D effects layer (ADR-0004): ambient dust motes, gold flecks, dynamite debris and smoke,
- * and a coin shower. One rAF loop with delta time, a fixed particle pool, and pre-rendered sprites.
- * It never touches React or layout. It also measures frame times for the Inspector.
+ * Canvas 2D effects layer (ADR-0004, ADR-0006). One rAF loop with delta time, a fixed particle pool
+ * (no allocation per frame), sprites pre-rendered once, and drawables (the character) rendered under
+ * the particles. Effects: ambient dust, gold flecks, muzzle flash, tracer, shell casings, impact puffs,
+ * and a layered dynamite BOOM (flash, fireball, shockwave, sparks, embers, debris, smoke and ash).
  */
 import { FRONTIER } from '../config/theme';
 
-type Kind = 'mote' | 'fleck' | 'chunk' | 'smoke' | 'coin' | 'spark';
+type Kind = 'mote' | 'fleck' | 'chunk' | 'smoke' | 'dust' | 'coin' | 'glint' | 'flash' | 'fire' | 'ring' | 'ember' | 'ash' | 'spark' | 'muzzle' | 'tracer' | 'shell';
 
 type Particle = {
   kind: Kind;
@@ -13,17 +14,25 @@ type Particle = {
   y: number;
   vx: number;
   vy: number;
+  /** Seconds before the particle becomes visible and starts simulating. */
+  delay: number;
   life: number;
   max: number;
   size: number;
+  grow: number;
   rot: number;
   vr: number;
   gravity: number;
   drag: number;
   color: string;
+  /** Tracer end point. */
+  x2: number;
+  y2: number;
 };
 
 export type FrameStatsSnapshot = { readonly fps: number; readonly avgMs: number; readonly p95Ms: number; readonly maxMs: number; readonly samples: readonly number[] };
+
+export type Drawable = { update(dtMs: number): void; draw(g: CanvasRenderingContext2D): void };
 
 class FrameStats {
   private readonly buf = new Float32Array(240);
@@ -45,52 +54,88 @@ class FrameStats {
   }
 }
 
-const POOL = 260;
-const MOTES = 34;
+const POOL = 520;
+const MOTES = 30;
 
-function sprite(size: number, draw: (g: CanvasRenderingContext2D, s: number) => void): HTMLCanvasElement {
+function sprite(size: number, stops: readonly [number, string][]): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d');
-  if (g) draw(g, size);
+  if (g) {
+    const r = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    for (const [at, col] of stops) r.addColorStop(at, col);
+    g.fillStyle = r;
+    g.fillRect(0, 0, size, size);
+  }
   return c;
 }
+
+const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 
 export class FxLayer {
   private readonly ctx: CanvasRenderingContext2D | null;
   private readonly pool: Particle[] = [];
+  private readonly drawables: Drawable[] = [];
   private raf = 0;
   private last = 0;
   private w = 0;
   private h = 0;
   private dpr = 1;
-  private readonly stats = new FrameStats();
-  private readonly smoke: HTMLCanvasElement;
-  private readonly glint: HTMLCanvasElement;
   private running = false;
+  private readonly stats = new FrameStats();
+  private readonly spr: Record<'smoke' | 'dust' | 'glint' | 'fire' | 'flash' | 'ember', HTMLCanvasElement>;
+  private activeCount = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly reducedMotion: boolean,
   ) {
     this.ctx = canvas.getContext('2d');
-    for (let i = 0; i < POOL; i++) this.pool.push({ kind: 'mote', x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1, size: 1, rot: 0, vr: 0, gravity: 0, drag: 0, color: '#000' });
-    this.smoke = sprite(64, (g, s) => {
-      const r = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-      r.addColorStop(0, 'rgba(140,130,118,0.55)');
-      r.addColorStop(0.6, 'rgba(110,100,92,0.25)');
-      r.addColorStop(1, 'rgba(90,80,72,0)');
-      g.fillStyle = r;
-      g.fillRect(0, 0, s, s);
-    });
-    this.glint = sprite(32, (g, s) => {
-      const r = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-      r.addColorStop(0, 'rgba(255,240,200,0.9)');
-      r.addColorStop(0.35, 'rgba(232,207,138,0.45)');
-      r.addColorStop(1, 'rgba(232,207,138,0)');
-      g.fillStyle = r;
-      g.fillRect(0, 0, s, s);
-    });
+    for (let i = 0; i < POOL; i++) {
+      this.pool.push({ kind: 'mote', x: 0, y: 0, vx: 0, vy: 0, delay: 0, life: 0, max: 1, size: 1, grow: 0, rot: 0, vr: 0, gravity: 0, drag: 0, color: '#000', x2: 0, y2: 0 });
+    }
+    this.spr = {
+      smoke: sprite(96, [
+        [0, 'rgba(112,102,92,0.72)'],
+        [0.55, 'rgba(92,84,76,0.38)'],
+        [1, 'rgba(80,72,66,0)'],
+      ]),
+      dust: sprite(64, [
+        [0, 'rgba(216,195,160,0.6)'],
+        [0.6, 'rgba(190,165,128,0.25)'],
+        [1, 'rgba(170,145,110,0)'],
+      ]),
+      glint: sprite(32, [
+        [0, 'rgba(255,240,200,0.9)'],
+        [0.35, 'rgba(232,207,138,0.45)'],
+        [1, 'rgba(232,207,138,0)'],
+      ]),
+      fire: sprite(96, [
+        [0, 'rgba(255,244,214,1)'],
+        [0.25, 'rgba(255,196,110,0.95)'],
+        [0.55, 'rgba(214,98,40,0.7)'],
+        [0.85, 'rgba(120,40,16,0.25)'],
+        [1, 'rgba(60,20,8,0)'],
+      ]),
+      flash: sprite(128, [
+        [0, 'rgba(255,246,224,0.95)'],
+        [0.4, 'rgba(255,214,150,0.45)'],
+        [1, 'rgba(255,190,120,0)'],
+      ]),
+      ember: sprite(16, [
+        [0, 'rgba(255,214,140,1)'],
+        [0.45, 'rgba(226,110,40,0.8)'],
+        [1, 'rgba(180,60,20,0)'],
+      ]),
+    };
+  }
+
+  addDrawable(d: Drawable): () => void {
+    this.drawables.push(d);
+    return () => {
+      const i = this.drawables.indexOf(d);
+      if (i >= 0) this.drawables.splice(i, 1);
+    };
   }
 
   start(): void {
@@ -102,7 +147,9 @@ export class FxLayer {
       const elapsed = now - this.last;
       this.last = now;
       this.stats.push(elapsed);
-      this.step(Math.min(elapsed, 100) / 1000);
+      const dt = Math.min(elapsed, 100);
+      for (const d of this.drawables) d.update(dt);
+      this.step(dt / 1000);
       this.draw();
       this.raf = requestAnimationFrame(loop);
     };
@@ -129,32 +176,107 @@ export class FxLayer {
     return this.stats.snapshot();
   }
 
+  /** Live (non-ambient) particles: for the inspector's FX readout. */
+  get active(): number {
+    return this.activeCount;
+  }
+
+  // ------------------------------------------------------------ effects
+
   /** Gold flecks + a glint when a bounty is found. */
   gold(x: number, y: number, scale = 1): void {
     const n = this.reducedMotion ? 4 : Math.round(22 * scale);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 60 + Math.random() * 160 * scale;
-      this.spawn('fleck', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 80, 0.6 + Math.random() * 0.5, 2 + Math.random() * 3, 520, 1.6, Math.random() < 0.6 ? FRONTIER.gold : FRONTIER.brassLight);
+      this.spawn('fleck', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 80, rnd(0.6, 1.1), rnd(2, 5), { gravity: 520, drag: 1.6, color: Math.random() < 0.6 ? FRONTIER.gold : FRONTIER.brassLight });
     }
-    this.spawn('spark', x, y, 0, 0, 0.35, 46 * scale, 0, 0, FRONTIER.brassLight);
+    this.spawn('glint', x, y, 0, 0, 0.35, 46 * scale);
   }
 
-  /** Dynamite: debris chunks, embers and a smoke column. */
+  /** Muzzle flash, gun smoke, sparks and an ejected brass casing. `angle` is the barrel direction. */
+  muzzle(x: number, y: number, angle: number, scale = 1): void {
+    this.spawn('muzzle', x, y, 0, 0, 0.075, 26 * scale, { rot: angle });
+    this.spawn('flash', x, y, 0, 0, 0.09, 70 * scale);
+    if (this.reducedMotion) return;
+    for (let i = 0; i < 3; i++) {
+      this.spawn('smoke', x + Math.cos(angle) * 6, y + Math.sin(angle) * 6, Math.cos(angle) * rnd(20, 50) + rnd(-8, 8), Math.sin(angle) * rnd(20, 50) - rnd(10, 25), rnd(0.6, 0.9), rnd(8, 14) * scale, {
+        grow: 26 * scale,
+        drag: 1.4,
+        delay: i * 0.02,
+      });
+    }
+    for (let i = 0; i < 5; i++) {
+      const a = angle + rnd(-0.35, 0.35);
+      const sp = rnd(260, 480);
+      this.spawn('spark', x, y, Math.cos(a) * sp, Math.sin(a) * sp, rnd(0.06, 0.14), rnd(5, 9) * scale, { drag: 4, color: FRONTIER.brassLight });
+    }
+    // casing ejects up and back from the cylinder
+    this.spawn('shell', x - Math.cos(angle) * 20 * scale, y - Math.sin(angle) * 20 * scale, -Math.cos(angle) * 90 + rnd(-30, 30), -rnd(160, 230), rnd(0.6, 0.8), 3.2 * scale, {
+      gravity: 900,
+      vr: rnd(-18, 18),
+      color: FRONTIER.brass,
+    });
+  }
+
+  /** Bullet tracer from the muzzle to the target; travel time in seconds. */
+  tracer(x1: number, y1: number, x2: number, y2: number, travel: number): void {
+    if (this.reducedMotion) return;
+    this.spawn('tracer', x1, y1, 0, 0, travel + 0.06, 2, { x2, y2 });
+  }
+
+  /** Bullet striking a wooden lid: dust puff, splinters, a hot spark. */
+  impact(x: number, y: number, scale = 1): void {
+    const k = this.reducedMotion ? 0.3 : 1;
+    for (let i = 0; i < 7 * k; i++) {
+      const a = rnd(0, Math.PI * 2);
+      this.spawn('dust', x, y, Math.cos(a) * rnd(30, 80), Math.sin(a) * rnd(20, 60) - 20, rnd(0.45, 0.8), rnd(10, 18) * scale, { grow: 40 * scale, drag: 2.2 });
+    }
+    for (let i = 0; i < 10 * k; i++) {
+      const a = rnd(-Math.PI, 0);
+      this.spawn('chunk', x, y, Math.cos(a) * rnd(80, 220), Math.sin(a) * rnd(120, 260), rnd(0.4, 0.7), rnd(2, 4.5) * scale, { gravity: 900, drag: 1, vr: rnd(-20, 20), color: Math.random() < 0.5 ? FRONTIER.timber : '#a87a4c' });
+    }
+    this.spawn('glint', x, y, 0, 0, 0.12, 22 * scale);
+  }
+
+  /**
+   * Layered dynamite BOOM: white-hot flash → fireball → shockwave ring → sparks and embers →
+   * flying debris → billowing smoke that rises and thins → slow drifting ash.
+   */
   blast(x: number, y: number, scale = 1): void {
-    const k = this.reducedMotion ? 0.2 : 1;
+    const k = this.reducedMotion ? 0.25 : 1;
+    this.spawn('flash', x, y, 0, 0, 0.18, 300 * scale);
+    for (let i = 0; i < Math.max(1, 6 * k); i++) {
+      this.spawn('fire', x + rnd(-10, 10) * scale, y + rnd(-10, 10) * scale, rnd(-30, 30), rnd(-60, -10), rnd(0.34, 0.55), rnd(34, 52) * scale, { grow: rnd(180, 280) * scale, drag: 2.5, delay: i * 0.012 });
+    }
+    if (!this.reducedMotion) {
+      this.spawn('ring', x, y, 0, 0, 0.42, 12 * scale, { grow: 560 * scale });
+      this.spawn('ring', x, y, 0, 0, 0.6, 6 * scale, { grow: 330 * scale, delay: 0.05 });
+    }
+    for (let i = 0; i < 18 * k; i++) {
+      const a = rnd(0, Math.PI * 2);
+      const sp = rnd(380, 720) * scale;
+      this.spawn('spark', x, y, Math.cos(a) * sp, Math.sin(a) * sp, rnd(0.1, 0.22), rnd(8, 14) * scale, { drag: 3, color: '#ffd28a' });
+    }
     for (let i = 0; i < 26 * k * scale; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = 140 + Math.random() * 320 * scale;
-      this.spawn('chunk', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 120, 0.9 + Math.random() * 0.6, 3 + Math.random() * 5, 900, 1.2, Math.random() < 0.5 ? FRONTIER.timber : FRONTIER.iron);
+      const sp = 140 + Math.random() * 340 * scale;
+      this.spawn('chunk', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 140, rnd(0.9, 1.5), rnd(3, 8), { gravity: 900, drag: 1.1, vr: rnd(-14, 14), color: Math.random() < 0.5 ? FRONTIER.timber : FRONTIER.iron });
     }
-    for (let i = 0; i < 18 * k * scale; i++) {
+    for (let i = 0; i < 26 * k; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = 80 + Math.random() * 260;
-      this.spawn('fleck', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 60, 0.4 + Math.random() * 0.4, 1.5 + Math.random() * 2, 300, 2, FRONTIER.ember);
+      const sp = rnd(60, 260);
+      this.spawn('ember', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 120, rnd(0.9, 1.8), rnd(3, 6), { gravity: 120, drag: 1.6, delay: rnd(0, 0.08) });
     }
-    for (let i = 0; i < 10 * k * scale; i++) {
-      this.spawn('smoke', x + (Math.random() - 0.5) * 30, y + (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 40, -30 - Math.random() * 50, 1.4 + Math.random() * 1.2, 30 + Math.random() * 40 * scale, -10, 0.6, FRONTIER.smoke);
+    for (let i = 0; i < 16 * k; i++) {
+      this.spawn('smoke', x + rnd(-24, 24) * scale, y + rnd(-14, 14) * scale, rnd(-50, 50), rnd(-70, -25), rnd(1.8, 3), rnd(44, 66) * scale, {
+        grow: rnd(55, 95) * scale,
+        drag: 0.8,
+        delay: rnd(0.04, 0.2),
+      });
+    }
+    for (let i = 0; i < 22 * k; i++) {
+      this.spawn('ash', x + rnd(-140, 140) * scale, y - rnd(40, 160) * scale, rnd(-12, 12), rnd(14, 36), rnd(2.2, 3.4), rnd(1.2, 2.4), { delay: rnd(0.35, 1.2), vr: rnd(-3, 3) });
     }
   }
 
@@ -162,7 +284,7 @@ export class FxLayer {
   coins(x: number, y: number, width: number): void {
     const n = this.reducedMotion ? 6 : 46;
     for (let i = 0; i < n; i++) {
-      this.spawn('coin', x + Math.random() * width, y - Math.random() * 40, (Math.random() - 0.5) * 60, 40 + Math.random() * 120, 1.4 + Math.random() * 0.8, 5 + Math.random() * 3, 640, 0.2, FRONTIER.gold);
+      this.spawn('coin', x + Math.random() * width, y - Math.random() * 40, rnd(-30, 30), rnd(40, 160), rnd(1.4, 2.2), rnd(5, 8), { gravity: 640, drag: 0.2, vr: rnd(-8, 8), color: FRONTIER.gold });
     }
   }
 
@@ -172,10 +294,35 @@ export class FxLayer {
 
   // ------------------------------------------------------------ simulation
 
-  private spawn(kind: Kind, x: number, y: number, vx: number, vy: number, life: number, size: number, gravity: number, drag: number, color: string): void {
-    const p = this.pool.find((q) => q.life <= 0 && q.kind !== 'mote') ?? this.pool.find((q) => q.life <= 0);
-    if (!p) return;
-    Object.assign(p, { kind, x, y, vx, vy, life, max: life, size, gravity, drag, color, rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 10 });
+  private spawn(
+    kind: Kind,
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+    life: number,
+    size: number,
+    o: Partial<Pick<Particle, 'gravity' | 'drag' | 'color' | 'grow' | 'delay' | 'rot' | 'vr' | 'x2' | 'y2'>> = {},
+  ): void {
+    const p = this.pool.find((q) => q.life <= 0);
+    if (!p) return; // pool full: drop the effect rather than allocate (bounded cost)
+    p.kind = kind;
+    p.x = x;
+    p.y = y;
+    p.vx = vx;
+    p.vy = vy;
+    p.life = life;
+    p.max = life;
+    p.size = size;
+    p.grow = o.grow ?? 0;
+    p.delay = o.delay ?? 0;
+    p.gravity = o.gravity ?? 0;
+    p.drag = o.drag ?? 0;
+    p.color = o.color ?? '#fff';
+    p.rot = o.rot ?? Math.random() * Math.PI;
+    p.vr = o.vr ?? 0;
+    p.x2 = o.x2 ?? x;
+    p.y2 = o.y2 ?? y;
   }
 
   private seedMotes(): void {
@@ -183,27 +330,29 @@ export class FxLayer {
     for (const p of this.pool) {
       if (placed >= MOTES) break;
       if (p.kind === 'mote' || p.life <= 0) {
-        Object.assign(p, {
-          kind: 'mote',
-          x: Math.random() * this.w,
-          y: Math.random() * this.h,
-          vx: 4 + Math.random() * 10,
-          vy: -2 + Math.random() * 4,
-          life: Infinity,
-          max: Infinity,
-          size: 0.8 + Math.random() * 1.6,
-          gravity: 0,
-          drag: 0,
-          color: FRONTIER.dust,
-          rot: Math.random() * Math.PI * 2,
-          vr: 0.3 + Math.random() * 0.6,
-        });
+        this.spawnMote(p);
         placed++;
       }
     }
   }
 
+  private spawnMote(p: Particle): void {
+    p.kind = 'mote';
+    p.x = Math.random() * this.w;
+    p.y = Math.random() * this.h;
+    p.vx = rnd(4, 14);
+    p.vy = rnd(-2, 2);
+    p.life = Infinity;
+    p.max = Infinity;
+    p.size = rnd(0.8, 2.4);
+    p.delay = 0;
+    p.rot = Math.random() * Math.PI * 2;
+    p.vr = rnd(0.3, 0.9);
+    p.color = FRONTIER.dust;
+  }
+
   private step(dt: number): void {
+    let active = 0;
     for (const p of this.pool) {
       if (p.life <= 0) continue;
       if (p.kind === 'mote') {
@@ -215,6 +364,11 @@ export class FxLayer {
         if (p.y > this.h + 4) p.y = -4;
         continue;
       }
+      active++;
+      if (p.delay > 0) {
+        p.delay -= dt;
+        continue;
+      }
       p.life -= dt;
       p.vy += p.gravity * dt;
       const d = Math.max(0, 1 - p.drag * dt);
@@ -223,8 +377,11 @@ export class FxLayer {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.rot += p.vr * dt;
-      if (p.kind === 'smoke') p.size += 26 * dt;
+      p.size += p.grow * dt;
+      if (p.kind === 'fire' || p.kind === 'ring') p.grow *= Math.max(0, 1 - 3.2 * dt); // decelerating expansion
+      if (p.kind === 'ash') p.vx += Math.sin(p.rot * 3) * 10 * dt; // flutter
     }
+    this.activeCount = active;
   }
 
   private draw(): void {
@@ -232,24 +389,138 @@ export class FxLayer {
     if (!g) return;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, this.w, this.h);
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = 'source-over';
+    for (const d of this.drawables) {
+      g.save();
+      d.draw(g);
+      g.restore();
+    }
     for (const p of this.pool) {
-      if (p.life <= 0) continue;
-      const t = p.kind === 'mote' ? 1 : Math.max(0, p.life / p.max);
+      if (p.life <= 0 || p.delay > 0) continue;
+      const t = p.kind === 'mote' ? 1 : Math.max(0, p.life / p.max); // 1 → 0 over life
+      const age = 1 - t;
       switch (p.kind) {
         case 'mote':
-          g.globalAlpha = 0.18 + 0.12 * Math.sin(p.rot * 2);
+          g.globalAlpha = 0.16 + 0.12 * Math.sin(p.rot * 2);
           g.fillStyle = p.color;
           g.fillRect(p.x, p.y, p.size, p.size);
           break;
         case 'smoke':
-          g.globalAlpha = Math.min(1, t * 1.4) * 0.8;
-          g.drawImage(this.smoke, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          // dark and dense early, thinning grey later
+          g.globalAlpha = Math.min(1, age * 6) * t * 0.85;
+          g.drawImage(this.spr.smoke, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
           break;
-        case 'spark':
+        case 'dust':
+          g.globalAlpha = t * 0.8;
+          g.drawImage(this.spr.dust, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          break;
+        case 'glint':
           g.globalAlpha = t;
-          g.drawImage(this.glint, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          g.drawImage(this.spr.glint, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
           break;
-        case 'coin': {
+        case 'flash':
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = t * t;
+          g.drawImage(this.spr.flash, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          g.globalCompositeOperation = 'source-over';
+          break;
+        case 'fire':
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = Math.min(1, t * 1.6) * 0.9;
+          g.drawImage(this.spr.fire, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          g.globalCompositeOperation = 'source-over';
+          break;
+        case 'ring':
+          g.globalAlpha = t * 0.75;
+          g.strokeStyle = '#f3dcae';
+          g.lineWidth = 1 + 7 * t;
+          g.beginPath();
+          g.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          g.stroke();
+          break;
+        case 'ember': {
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = t * (0.65 + 0.35 * Math.sin(p.rot * 40 + p.life * 30));
+          g.drawImage(this.spr.ember, p.x - p.size, p.y - p.size, p.size * 2, p.size * 2);
+          g.globalCompositeOperation = 'source-over';
+          break;
+        }
+        case 'ash':
+          g.globalAlpha = Math.min(1, age * 4) * t * 0.7;
+          g.fillStyle = '#5a534c';
+          g.save();
+          g.translate(p.x, p.y);
+          g.rotate(p.rot);
+          g.fillRect(-p.size, -p.size * 0.35, p.size * 2, p.size * 0.7);
+          g.restore();
+          break;
+        case 'spark': {
+          // streak along the velocity
+          const sp = Math.hypot(p.vx, p.vy) || 1;
+          g.globalAlpha = t;
+          g.strokeStyle = p.color;
+          g.lineWidth = 1.6;
+          g.beginPath();
+          g.moveTo(p.x, p.y);
+          g.lineTo(p.x - (p.vx / sp) * p.size, p.y - (p.vy / sp) * p.size);
+          g.stroke();
+          break;
+        }
+        case 'muzzle': {
+          // four-point star flash along the barrel
+          g.save();
+          g.translate(p.x, p.y);
+          g.rotate(p.rot);
+          g.globalCompositeOperation = 'lighter';
+          g.globalAlpha = t;
+          const L = p.size * (0.8 + 0.4 * age);
+          g.fillStyle = '#ffe2a6';
+          g.beginPath();
+          g.moveTo(-2, 0);
+          g.lineTo(L * 0.35, -L * 0.28);
+          g.lineTo(L, 0);
+          g.lineTo(L * 0.35, L * 0.28);
+          g.closePath();
+          g.fill();
+          g.fillStyle = '#fff6e0';
+          g.beginPath();
+          g.arc(L * 0.18, 0, L * 0.16, 0, Math.PI * 2);
+          g.fill();
+          g.restore();
+          g.globalCompositeOperation = 'source-over';
+          break;
+        }
+        case 'tracer': {
+          const travel = p.max - 0.06;
+          const u = Math.min(1, (p.max - p.life) / Math.max(0.001, travel));
+          const hx = p.x + (p.x2 - p.x) * u;
+          const hy = p.y + (p.y2 - p.y) * u;
+          const tail = Math.max(0, u - 0.35);
+          const tx = p.x + (p.x2 - p.x) * tail;
+          const ty = p.y + (p.y2 - p.y) * tail;
+          const grad = g.createLinearGradient(tx, ty, hx, hy);
+          grad.addColorStop(0, 'rgba(255,230,180,0)');
+          grad.addColorStop(1, 'rgba(255,240,205,0.95)');
+          g.globalAlpha = u >= 1 ? t / 0.5 : 1;
+          g.strokeStyle = grad;
+          g.lineWidth = 2;
+          g.beginPath();
+          g.moveTo(tx, ty);
+          g.lineTo(hx, hy);
+          g.stroke();
+          break;
+        }
+        case 'shell':
+          g.globalAlpha = Math.min(1, t * 2);
+          g.save();
+          g.translate(p.x, p.y);
+          g.rotate(p.rot);
+          g.fillStyle = p.color;
+          g.fillRect(-p.size, -p.size * 0.45, p.size * 2, p.size * 0.9);
+          g.restore();
+          break;
+        case 'coin':
           g.globalAlpha = Math.min(1, t * 2);
           g.save();
           g.translate(p.x, p.y);
@@ -263,7 +534,6 @@ export class FxLayer {
           g.stroke();
           g.restore();
           break;
-        }
         default:
           g.globalAlpha = Math.min(1, t * 1.5);
           g.save();
@@ -275,5 +545,6 @@ export class FxLayer {
       }
     }
     g.globalAlpha = 1;
+    g.globalCompositeOperation = 'source-over';
   }
 }

@@ -166,6 +166,50 @@ check('stake refunded on open failure', (await purse()) === p8, `${p8} vs ${awai
 await page.click('.modal .btn--primary');
 check('dismiss returns to IDLE', await waitState(['IDLE']));
 
+// 8b. Character & FX: shot → impact → flip ordering, scene beats, layered boom.
+const setLatencyZero = () =>
+  page.evaluate(() => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    for (const r of document.querySelectorAll('.inspector .range-pair input')) {
+      setter.call(r, '0');
+      r.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+await setLatencyZero();
+await startRound();
+await setPeek(true);
+const hz6 = await hazards();
+const safe6 = (await hiddenCells()).filter((c) => !hz6.includes(c));
+await clickCell(safe6[0]);
+await sleep(110); // response is instant, but the muzzle flash is ~190 ms after the pick
+const early = await page.$eval(`.cell[data-cell="${safe6[0]}"]`, (e) => e.dataset.view);
+check('flip waits for the bullet even with zero latency', early === 'pending', `view at +110ms: ${early}`);
+await waitState(['ROUND_ACTIVE']);
+await sleep(300);
+const ev1 = await page.$eval('[data-testid="scene-events"]', (e) => e.textContent);
+check('scene logs shoot → safe for the pick', ev1.includes(`safe ${safe6[0]}`) && ev1.includes(`shoot ${safe6[0]}`), ev1);
+await clickCell(hz6[0]);
+await waitState(['ROUND_OVER_BUST']);
+await sleep(150);
+const parts = await page.$eval('[data-testid="scene-particles"]', (e) => parseInt(e.textContent, 10));
+const ev2 = await page.$eval('[data-testid="scene-events"]', (e) => e.textContent);
+check('dynamite triggers a layered BOOM (scene event + particle burst)', ev2.includes('BOOM') && parts > 60, `${parts} particles · ${ev2.slice(0, 60)}`);
+const clipNow = await page.$eval('[data-testid="scene-clip"]', (e) => e.textContent);
+check('marshal reacts with the flinch clip', clipNow.startsWith('flinch'), clipNow);
+await page.evaluate(() => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+  const [a, b] = document.querySelectorAll('.inspector .range-pair input');
+  setter.call(b, '320');
+  b.dispatchEvent(new Event('input', { bubbles: true }));
+  setter.call(a, '120');
+  a.dispatchEvent(new Event('input', { bubbles: true }));
+});
+await page.screenshot({ path: `${OUT}/07-boom.png` });
+await sleep(1400); // FX window: fireball, smoke billows, ash
+const boomPerf = await page.$eval('.perf__stats', (e) => e.textContent);
+const boomFps = await page.$eval('.perf__fps', (e) => parseFloat(e.textContent));
+if (GPU) check('frame rate holds through the BOOM window (≥ 50 fps)', boomFps >= 50, `${boomFps} fps · ${boomPerf}`);
+
 // 9. Preset switch to 6×6.
 await page.evaluate(() => [...document.querySelectorAll('.inspector .preset-grid .chip')].find((b) => b.textContent.includes('6×6'))?.click());
 await sleep(500);

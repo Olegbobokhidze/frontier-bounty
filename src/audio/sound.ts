@@ -12,6 +12,8 @@ export const Cue = {
   CASHOUT: 'cashout',
   STAKE: 'stake',
   ERROR: 'error',
+  SHOT: 'shot',
+  HOLSTER: 'holster',
 } as const;
 export type Cue = (typeof Cue)[keyof typeof Cue];
 
@@ -147,6 +149,15 @@ export class FrontierSound {
         case Cue.STAKE: // leather pouch + double knock
           this.noiseHit(ctx, t, 0.08, 'lowpass', 700, 0.18);
           this.knock(ctx, t + 0.06, 300, 0.07, 0.25);
+          break;
+        case Cue.SHOT: // revolver report: sharp crack + low body + short tail
+          this.noiseHit(ctx, t, 0.05, 'highpass', 1800, 0.55);
+          this.tone(ctx, t, 160, 0.16, 'sine', 0.55, 48);
+          this.noiseHit(ctx, t + 0.01, 0.32, 'bandpass', 900, 0.16, 300);
+          break;
+        case Cue.HOLSTER: // cylinder ratchet + leather slap
+          for (let i = 0; i < 3; i++) this.knock(ctx, t + i * 0.035, 2400 - i * 300, 0.02, 0.06);
+          this.noiseHit(ctx, t + 0.12, 0.06, 'lowpass', 900, 0.14);
           break;
         case Cue.ERROR: // dull iron clank
           this.tone(ctx, t, 196, 0.25, 'square', 0.06);

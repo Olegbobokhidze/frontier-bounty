@@ -295,22 +295,74 @@ code {
 }
 
 /* ================================================================ board */
-.board {
+/* Stage = character slot ("posse") + board + one shared FX/character canvas (ADR-0006). */
+.stage {
   position: absolute;
   inset: var(--s-5);
+  display: grid;
+  grid-template-columns: minmax(120px, 0.36fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--s-2);
   --reveal-safe-ms: 420ms;
   --reveal-hazard-ms: 760ms;
+}
+.posse {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius);
+  /* warm lamp-light pool on the boards where the marshal stands */
+  background:
+    radial-gradient(ellipse 70% 22% at 40% 96%, rgb(255 214 150 / 0.16), transparent 70%),
+    radial-gradient(ellipse 80% 60% at 30% 30%, rgb(255 220 170 / 0.08), transparent 70%);
+}
+.posse__quip {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-2);
+  max-width: 70%;
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-size: var(--fs-14);
+  line-height: var(--lh-14);
+  color: var(--ink);
+  background: var(--grain), var(--parchment-200);
+  box-shadow: 0 0 0 1px var(--parchment-500), 0 3px 0 rgb(0 0 0 / 0.35);
+  animation: quip 1800ms var(--ease-out) both;
+  pointer-events: none;
+}
+@keyframes quip {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) rotate(-2deg);
+  }
+  12%,
+  80% {
+    opacity: 1;
+    transform: rotate(-1deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px) rotate(-1deg);
+  }
+}
+.board {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.stage__fx {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
 }
 .board__surface {
   position: absolute;
   inset: 0;
   touch-action: manipulation;
   user-select: none;
-}
-.board__fx {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
 }
 .cell {
   position: absolute;
@@ -489,7 +541,11 @@ code {
   box-shadow: 0 0 0 3px var(--parchment-500), 0 0 0 6px var(--timber-800), 0 24px 48px -12px rgb(0 0 0 / 0.8);
   pointer-events: none;
   animation: poster 520ms var(--ease-out) both;
-  animation-delay: 240ms;
+  animation-delay: 520ms;
+}
+/* Let the BOOM, the flinch and the first smoke billows read before the poster lands. */
+.banner--bust {
+  animation-delay: 1150ms;
 }
 @keyframes poster {
   from {
@@ -1212,8 +1268,10 @@ code {
   .claim__board {
     padding: var(--s-3);
   }
-  .board {
+  .stage {
     inset: var(--s-3);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 76px minmax(0, 1fr);
   }
   .ledger {
     gap: var(--s-3);
@@ -1260,6 +1318,9 @@ code {
   .claim {
     grid-template-rows: minmax(0, 1fr);
   }
+}
+/* Compact ledger on short portrait screens and on every phone-width portrait. */
+@media (orientation: portrait) and (max-width: 820px) and (max-height: 760px), (orientation: portrait) and (max-width: 599px) {
   .ledger {
     gap: var(--s-2);
     padding: var(--s-3);
@@ -1291,6 +1352,28 @@ code {
   .toggle,
   .primary {
     height: 48px;
+  }
+}
+
+/* Portrait tablets: room for a taller strip. */
+@media (orientation: portrait) and (min-width: 600px) and (max-width: 820px) and (min-height: 900px) {
+  .stage {
+    grid-template-rows: 150px minmax(0, 1fr);
+  }
+}
+/* Short portrait: a waist-up strip for the marshal. */
+@media (orientation: portrait) and (max-width: 820px) and (max-height: 760px) {
+  .stage {
+    grid-template-rows: 68px minmax(0, 1fr);
+  }
+}
+/* Very short portrait: no room for the marshal; shots come from off-screen below the board. */
+@media (orientation: portrait) and (max-width: 820px) and (max-height: 680px) {
+  .stage {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .posse {
+    display: none;
   }
 }
 
@@ -1354,8 +1437,9 @@ code {
   .claim__board {
     padding: var(--s-2);
   }
-  .board {
+  .stage {
     inset: var(--s-2);
+    grid-template-columns: minmax(96px, 0.3fr) minmax(0, 1fr);
   }
   .ledger {
     gap: var(--s-2);

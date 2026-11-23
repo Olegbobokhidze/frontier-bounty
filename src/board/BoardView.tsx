@@ -1,7 +1,8 @@
 /**
- * Board: DOM buttons positioned from the shared GridLayout + one Canvas FX layer (ADR-0004).
- * Pointer input is hit-tested through engine/spatial from a single delegated listener;
- * keyboard input uses a roving tabindex with arrow keys.
+ * Stage = character slot + board + one shared canvas (ADR-0004, ADR-0006).
+ * Board cells are DOM buttons positioned from the shared GridLayout; pointer input is hit-tested through
+ * engine/spatial; keyboard input uses a roving tabindex. The Scene (gunslinger + FX) observes picks and
+ * reveals; a revealed cell only flips once the shot has landed.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { RoundState, type BountyContext } from '../engine/bounty/machine';
@@ -10,9 +11,9 @@ import { cellLabel, cellRect, fitLayout, hitTest, move, toCell, type Direction, 
 import { BlastArt, BountyArt, DynamiteArt } from './art';
 import { createBoardPort, revealTimings } from './board-port';
 import { CellView, boardSize, cellViews, isFaceUp, pickMultipliers } from './cell-state';
-import { FxLayer } from './fx';
+import { Scene, type SceneEvent } from './scene/scene';
 
-export type BoardReady = { readonly port: BoardPort; readonly fx: FxLayer };
+export type BoardReady = { readonly port: BoardPort; readonly scene: Scene };
 
 type Props = {
   readonly ctx: BountyContext;
@@ -36,8 +37,33 @@ const VIEW_LABEL: Readonly<Record<CellView, string>> = {
   missed: 'bounty (not claimed)',
 };
 
+/** The marshal's one-liners: flavour only, keyed by scene beat. */
+const QUIPS: Partial<Record<SceneEvent['type'], readonly string[]>> = {
+  safe: ["Claim's good.", 'Easy money.', 'Another nugget.', 'Steady hand.'],
+  boom: ['Dang dynamite!', 'Hit the dirt!', 'Well, shoot.'],
+  collect: ['Pay the marshal.', "That'll buy the saloon.", 'Pleasure doin’ business.'],
+};
+
+const rel = (r: DOMRect, base: DOMRect) => ({ x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height });
+
+/** Decaying random camera shake (Web Animations, transform only). */
+function shakeKeyframes(amplitude: number): Keyframe[] {
+  const frames: Keyframe[] = [{ transform: 'translate(0, 0)' }];
+  for (let i = 1; i <= 8; i++) {
+    const a = amplitude * (1 - i / 9) ** 2;
+    frames.push({ transform: `translate(${((i % 2 ? -1 : 1) * a * (0.6 + Math.random() * 0.4)).toFixed(2)}px, ${((Math.random() - 0.5) * a).toFixed(2)}px)` });
+  }
+  frames.push({ transform: 'translate(0, 0)' });
+  return frames;
+}
+
 export function BoardView({ ctx, onPick, onReady, peek, reducedMotion }: Props) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const posseRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<Scene | null>(null);
+  const [, setImpactTick] = useState(0);
+  const [quip, setQuip] = useState<{ id: number; text: string } | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layoutRef = useRef<GridLayout | null>(null);
@@ -46,7 +72,11 @@ export function BoardView({ ctx, onPick, onReady, peek, reducedMotion }: Props) 
   const [focusIndex, setFocusIndex] = useState(0);
   const { rows, cols } = boardSize(ctx);
   const size = useMemo(() => ({ rows, cols }), [rows, cols]);
-  const views = useMemo(() => cellViews(ctx), [ctx]);
+  const derived = useMemo(() => cellViews(ctx), [ctx]);
+  // Impact gating: a revealed cell stays "digging" until the shot lands (ADR-0006).
+  const views = derived.map((v, i) =>
+    (v === CellView.REVEAL_SAFE || v === CellView.REVEAL_HAZARD) && sceneRef.current && !sceneRef.current.hasImpacted(i) ? CellView.PENDING : v,
+  );
   const mults = useMemo(() => pickMultipliers(ctx), [ctx]);
   const peekSet = useMemo(() => new Set(peek ?? []), [peek]);
   const canPick = ctx.state === RoundState.ROUND_ACTIVE;
@@ -68,43 +98,56 @@ export function BoardView({ ctx, onPick, onReady, peek, reducedMotion }: Props) 
     return () => ro.disconnect();
   }, [size]);
 
-  // FX layer + BoardPort lifetime.
+  // Scene (character + FX) and BoardPort lifetime; geometry from the stage, slot and board boxes.
   useEffect(() => {
     const canvas = canvasRef.current;
+    const stage = stageRef.current;
     const host = hostRef.current;
-    if (!canvas || !host) return;
-    const fx = new FxLayer(canvas, reducedMotion);
-    const r = host.getBoundingClientRect();
-    fx.resize(r.width, r.height);
-    fx.start();
-    const ro = new ResizeObserver(() => {
-      const b = host.getBoundingClientRect();
-      fx.resize(b.width, b.height);
-    });
-    ro.observe(host);
-    const port = createBoardPort({
-      fx,
-      layout: () => layoutRef.current,
+    if (!canvas || !stage || !host) return;
+    const scene = new Scene(canvas, {
       reducedMotion,
-      shake: (s) =>
-        surfaceRef.current?.animate(
-          [
-            { transform: 'translate(0,0)' },
-            { transform: `translate(${-s}px, ${s * 0.4}px)` },
-            { transform: `translate(${s * 0.8}px, ${-s * 0.5}px)` },
-            { transform: `translate(${-s * 0.4}px, ${s * 0.3}px)` },
-            { transform: 'translate(0,0)' },
-          ],
-          { duration: 380, easing: 'cubic-bezier(.36,.07,.19,.97)' },
-        ),
+      layout: () => layoutRef.current,
+      shake: (a) => stage.animate(shakeKeyframes(a), { duration: 460, easing: 'linear' }),
     });
-    onReady({ port, fx });
+    sceneRef.current = scene;
+    const measure = () => {
+      const base = stage.getBoundingClientRect();
+      const slot = posseRef.current ? rel(posseRef.current.getBoundingClientRect(), base) : null;
+      const board = rel(host.getBoundingClientRect(), base);
+      scene.setGeometry({ width: base.width, height: base.height, slot: slot && slot.w > 0 && slot.h > 0 ? slot : null, boardOrigin: { x: board.x, y: board.y } });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(stage);
+    ro.observe(host);
+    if (posseRef.current) ro.observe(posseRef.current);
+    const off = scene.onEvent((e) => {
+      if (e.type === 'impact') setImpactTick((n) => n + 1);
+      const line = QUIPS[e.type];
+      if (line) setQuip({ id: Date.now(), text: line[Math.floor(Math.random() * line.length)] ?? '' });
+    });
+    onReady({ port: createBoardPort(scene, reducedMotion), scene });
     return () => {
+      off();
       ro.disconnect();
-      fx.dispose();
+      scene.dispose();
+      sceneRef.current = null;
       onReady(null);
     };
   }, [onReady, reducedMotion]);
+
+  // Observe the round: a new reveal request → draw & fire; a new round → ready stance.
+  const revealRequestId = ctx.inFlight?.kind === 'reveal' ? ctx.inFlight.request.requestId : null;
+  const revealCell = ctx.inFlight?.kind === 'reveal' ? ctx.inFlight.request.cell : null;
+  const lastShot = useRef<number | null>(null);
+  useEffect(() => {
+    if (revealRequestId === null || revealCell === null || lastShot.current === revealRequestId) return;
+    lastShot.current = revealRequestId; // retries reuse the requestId → no second shot
+    sceneRef.current?.shoot(revealCell);
+  }, [revealRequestId, revealCell]);
+  useEffect(() => {
+    if (ctx.state === RoundState.CONFIGURING) sceneRef.current?.roundStart();
+  }, [ctx.state]);
 
   // Keep keyboard focus inside the grid when it shrinks.
   const total = size.rows * size.cols;
@@ -157,7 +200,15 @@ export function BoardView({ ctx, onPick, onReady, peek, reducedMotion }: Props) 
   } as CSSProperties;
 
   return (
-    <div className="board" ref={hostRef} style={style} data-state={ctx.state}>
+    <div className="stage" ref={stageRef} style={style} data-state={ctx.state}>
+      <div className="posse" ref={posseRef} aria-hidden="true">
+        {quip && (
+          <span key={quip.id} className="posse__quip" onAnimationEnd={() => setQuip(null)}>
+            {quip.text}
+          </span>
+        )}
+      </div>
+      <div className="board" ref={hostRef}>
       <div
         ref={surfaceRef}
         className={`board__surface ${canPick ? 'is-live' : ''}`}
@@ -206,8 +257,9 @@ export function BoardView({ ctx, onPick, onReady, peek, reducedMotion }: Props) 
               </button>
             );
           })}
+        </div>
       </div>
-      <canvas ref={canvasRef} className="board__fx" aria-hidden="true" />
+      <canvas ref={canvasRef} className="stage__fx" aria-hidden="true" />
     </div>
   );
 }

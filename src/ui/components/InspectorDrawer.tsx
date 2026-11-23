@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { verifyRound, type Verification } from '../../adapters/fairness';
 import { FORCED_STEP_LABELS, ForcedStep } from '../../adapters/mock-provider';
-import type { FrameStatsSnapshot } from '../../board/fx';
+import type { SceneDebug } from '../../board/scene/scene';
 import { GAME_MODES } from '../../config/modes';
 import { TERRITORY_PRESETS } from '../../config/presets';
 import type { TransitionRecord } from '../../core/machine';
@@ -81,7 +81,7 @@ export function InspectorDrawer({ open, onClose, peek, onPeek }: Props) {
           <RoundSection peek={peek} onPeek={onPeek} />
           <MockSection lastLatency={lastLatency} />
           <PresetSection />
-          <PerfSection />
+          <SceneSection />
           <LogSection history={history} />
         </>
       )}
@@ -297,22 +297,51 @@ function PresetSection() {
   );
 }
 
-function PerfSection() {
-  const { fx } = useGame();
-  const layer = useSyncExternalStore(fx.subscribe, fx.get);
-  const [stats, setStats] = useState<FrameStatsSnapshot | null>(null);
+function SceneSection() {
+  const { scene } = useGame();
+  const current = useSyncExternalStore(scene.subscribe, scene.get);
+  const [debug, setDebug] = useState<SceneDebug | null>(null);
   useEffect(() => {
-    if (!layer) return;
-    const id = window.setInterval(() => setStats(layer.getStats()), 250);
+    if (!current) return;
+    const id = window.setInterval(() => setDebug(current.getDebug()), 250);
     return () => window.clearInterval(id);
-  }, [layer]);
+  }, [current]);
+  const stats = debug?.stats;
   const samples = stats?.samples ?? [];
   const W = 280;
   const H = 44;
   const pts = samples.map((v, i) => `${(i / Math.max(1, samples.length - 1)) * W},${H - (Math.min(v, 50) / 50) * H}`).join(' ');
+  const previews = ['shoot', 'celebrate', 'boom', 'collect', 'idle'] as const;
   return (
     <section className="insp">
-      <h3 className="insp__title">Frame time</h3>
+      <h3 className="insp__title">Character & FX · Marshal Silas Kane</h3>
+      <dl className="kv">
+        <div>
+          <dt>clip</dt>
+          <dd data-testid="scene-clip">
+            {debug ? `${debug.clip} · ${debug.clipMs} ms` : '—'}
+          </dd>
+        </div>
+        <div>
+          <dt>framing</dt>
+          <dd>{debug?.framing ?? '—'}</dd>
+        </div>
+        <div>
+          <dt>live particles</dt>
+          <dd data-testid="scene-particles">{debug?.particles ?? 0} / 520</dd>
+        </div>
+        <div>
+          <dt>scene events</dt>
+          <dd data-testid="scene-events">{debug?.events.slice(0, 4).join(' · ') || '—'}</dd>
+        </div>
+      </dl>
+      <div className="preset-row" role="group" aria-label="Preview animations (cosmetic only)">
+        {previews.map((p) => (
+          <button key={p} type="button" className="btn btn--ghost btn--sm" disabled={!current} onClick={() => current?.preview(p)}>
+            {p}
+          </button>
+        ))}
+      </div>
       <div className="perf">
         <span className={`perf__fps ${stats && stats.fps < 50 ? 'is-warn' : ''}`}>
           {stats ? stats.fps.toFixed(0) : '—'}
