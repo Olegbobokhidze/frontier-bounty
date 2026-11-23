@@ -1,0 +1,69 @@
+/*
+ * Frontier design tokens. Even, integer-pixel line heights only (AGENTS.md §3). No neon or glow.
+ */
+:root {
+  /* materials */
+  --timber-900: #1c110a;
+  --timber-800: #2a1a10;
+  --timber-700: #3b2516;
+  --timber-600: #4e321e;
+  --timber-500: #6a4528;
+  --timber-400: #8a5d36;
+  --timber-300: #a87a4c;
+  --leather: #7a4a2a;
+  --leather-dark: #5a331b;
+  --brass-700: #7d6024;
+  --brass-500: #c9a24e;
+  --brass-300: #e8cf8a;
+  --gold: #e3b23c;
+  --iron-900: #1d1b19;
+  --iron-700: #2f2c29;
+  --iron-500: #57514b;
+  --parchment-100: #f6edd8;
+  --parchment-200: #efe2c4;
+  --parchment-300: #e2cfa6;
+  --parchment-500: #b89f74;
+  --ink: #2b1d12;
+  --ink-soft: #5e4732;
+  --blood: #9b2f1f;
+  --ember: #d0632b;
+  --sage: #4f6b3c;
+  --sage-dark: #3a5130;
+
+  /* type */
+  --font-display: 'Rye', 'Georgia', serif;
+  --font-ui: 'Bitter', 'Georgia', 'Times New Roman', serif;
+  --font-ledger: 'Courier Prime', 'Courier New', ui-monospace, monospace;
+
+  --fs-11: 11px; --lh-11: 16px;
+  --fs-12: 12px; --lh-12: 16px;
+  --fs-14: 14px; --lh-14: 20px;
+  --fs-16: 16px; --lh-16: 24px;
+  --fs-18: 18px; --lh-18: 24px;
+  --fs-20: 20px; --lh-20: 28px;
+  --fs-24: 24px; --lh-24: 32px;
+  --fs-32: 32px; --lh-32: 40px;
+  --fs-40: 40px; --lh-40: 48px;
+
+  /* space (4px grid) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --tap: 44px;
+
+  --shadow-carved: inset 0 1px 0 rgb(255 255 255 / 0.08), inset 0 -2px 0 rgb(0 0 0 / 0.35), 0 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-lift: 0 10px 24px -10px rgb(0 0 0 / 0.7);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* paper grain: SVG turbulence, no image files */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .24 0 0 0 0 .12 0 0 0 .22 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --wood-grain: repeating-linear-gradient(92deg, rgb(0 0 0 / 0) 0 7px, rgb(0 0 0 / 0.07) 7px 8px, rgb(0 0 0 / 0) 8px 19px, rgb(255 255 255 / 0.03) 19px 20px);
+}
