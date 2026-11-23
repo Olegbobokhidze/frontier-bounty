@@ -89,7 +89,7 @@ export function App() {
           </span>
           <div className="brand__text">
             <h1 className="brand__title">Frontier Dynamite &amp; Bounty</h1>
-            <span className="brand__sub">A frontier claim game · by Oleg Bobokhidze</span>
+            <span className="brand__sub">by Oleg Bobokhidze</span>
           </div>
         </div>
         <nav className="modes" aria-label="Game modes">

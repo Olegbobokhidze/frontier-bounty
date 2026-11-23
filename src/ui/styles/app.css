@@ -535,6 +535,7 @@ code {
   max-height: 100%;
   overflow-y: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* children may shrink; never overflow the card */
   gap: var(--s-4);
   padding: var(--s-5);
   color: var(--ink);
@@ -1251,8 +1252,65 @@ code {
   }
 }
 
+/* Short portrait screens (most phones ≤ 760px tall): compact ledger so the board keeps ≥ 40px cells. */
+@media (orientation: portrait) and (max-width: 820px) and (max-height: 760px) {
+  .ladder {
+    display: none;
+  }
+  .claim {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .ledger {
+    gap: var(--s-2);
+    padding: var(--s-3);
+  }
+  .ledger__purse {
+    padding-bottom: var(--s-1);
+  }
+  .ledger > .ledger__group {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .ledger__split .label {
+    display: none;
+  }
+  .stepper__btn {
+    height: 40px;
+  }
+  .select {
+    height: 46px;
+  }
+  .odds {
+    padding: var(--s-1) 0;
+  }
+  .odds dd {
+    font-size: var(--fs-16);
+    line-height: var(--lh-16);
+  }
+  .toggle,
+  .primary {
+    height: 48px;
+  }
+}
+
 /* Very small phones: compact controls. */
 @media (max-width: 380px) and (orientation: portrait) {
+  .figure {
+    font-size: var(--fs-20);
+    line-height: var(--lh-20);
+  }
+  .stepper__value {
+    font-size: var(--fs-16);
+    line-height: var(--lh-16);
+  }
+  .odds dt {
+    letter-spacing: 0.02em;
+  }
+  .primary {
+    font-size: var(--fs-16);
+    line-height: var(--lh-16);
+  }
   .ledger__split {
     gap: var(--s-2);
   }
@@ -1262,9 +1320,6 @@ code {
   }
   .select {
     height: 42px;
-  }
-  .brand__sub {
-    display: none;
   }
   .topbar__actions {
     gap: var(--s-1);
@@ -1283,7 +1338,6 @@ code {
   .topbar {
     padding: var(--s-1) var(--s-3);
   }
-  .brand__sub,
   .credit,
   .ladder,
   .presets {
