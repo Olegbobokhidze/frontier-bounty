@@ -1,12 +1,36 @@
 /**
- * Canvas 2D effects layer (ADR-0004, ADR-0006). One rAF loop with delta time, a fixed particle pool
- * (no allocation per frame), sprites pre-rendered once, and drawables (the character) rendered under
- * the particles. Effects: ambient dust, gold flecks, muzzle flash, tracer, shell casings, impact puffs,
- * and a layered dynamite BOOM (flash, fireball, shockwave, sparks, embers, debris, smoke and ash).
+ * Canvas 2D effects layer (ADR-0004, ADR-0006, ADR-0007). One rAF loop with delta time, a fixed particle pool
+ * and a fixed emitter bank (no allocation per frame), sprites pre-rendered once, and drawables (the character)
+ * rendered under the particles. Effects: ambient dust, gold flecks and a brass ring, muzzle flash with a lingering
+ * barrel wisp, tracer, shell casings, impact puffs, a sputtering fuse, boot and coat dust, coins that bounce, and a
+ * layered dynamite BOOM (heat veil, flash, fireball, fire tongues, shockwaves, sparks, embers, splinters, clods,
+ * scorch, billowing smoke, a smouldering crater and drifting ash).
  */
 import { FRONTIER } from '../config/theme';
 
-type Kind = 'mote' | 'fleck' | 'chunk' | 'smoke' | 'dust' | 'coin' | 'glint' | 'flash' | 'fire' | 'ring' | 'ember' | 'ash' | 'spark' | 'muzzle' | 'tracer' | 'shell';
+type Kind =
+  | 'mote'
+  | 'fleck'
+  | 'chunk'
+  | 'splinter'
+  | 'clod'
+  | 'smoke'
+  | 'wisp'
+  | 'dust'
+  | 'coin'
+  | 'glint'
+  | 'flash'
+  | 'veil'
+  | 'fire'
+  | 'ring'
+  | 'brassRing'
+  | 'ember'
+  | 'ash'
+  | 'spark'
+  | 'muzzle'
+  | 'tracer'
+  | 'shell'
+  | 'scorch';
 
 type Particle = {
   kind: Kind;
@@ -25,10 +49,15 @@ type Particle = {
   gravity: number;
   drag: number;
   color: string;
-  /** Tracer end point. */
+  /** Tracer end point; for coins, x2 = bounces left and y2 = the floor line. */
   x2: number;
   y2: number;
 };
+
+type EmitterKind = 'fuse' | 'crater' | 'wisp';
+/** Writes the emitter's current position into `out`; returns false when the source is not visible. */
+export type Follow = (out: { x: number; y: number }) => boolean;
+type Emitter = { kind: EmitterKind; active: boolean; x: number; y: number; delay: number; life: number; max: number; acc: number; rate: number; scale: number; follow: Follow | null };
 
 export type FrameStatsSnapshot = { readonly fps: number; readonly avgMs: number; readonly p95Ms: number; readonly maxMs: number; readonly samples: readonly number[] };
 
@@ -54,8 +83,9 @@ class FrameStats {
   }
 }
 
-const POOL = 520;
+export const FX_POOL = 560;
 const MOTES = 30;
+const EMITTERS = 6;
 
 function sprite(size: number, stops: readonly [number, string][]): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -75,15 +105,18 @@ const rnd = (a: number, b: number) => a + Math.random() * (b - a);
 export class FxLayer {
   private readonly ctx: CanvasRenderingContext2D | null;
   private readonly pool: Particle[] = [];
+  private readonly emitters: Emitter[] = [];
   private readonly drawables: Drawable[] = [];
+  private readonly at = { x: 0, y: 0 };
   private raf = 0;
   private last = 0;
   private w = 0;
   private h = 0;
   private dpr = 1;
   private running = false;
+  private cursor = 0;
   private readonly stats = new FrameStats();
-  private readonly spr: Record<'smoke' | 'dust' | 'glint' | 'fire' | 'flash' | 'ember', HTMLCanvasElement>;
+  private readonly spr: Record<'smoke' | 'dust' | 'glint' | 'fire' | 'flash' | 'ember' | 'scorch', HTMLCanvasElement>;
   private activeCount = 0;
 
   constructor(
@@ -91,8 +124,11 @@ export class FxLayer {
     private readonly reducedMotion: boolean,
   ) {
     this.ctx = canvas.getContext('2d');
-    for (let i = 0; i < POOL; i++) {
+    for (let i = 0; i < FX_POOL; i++) {
       this.pool.push({ kind: 'mote', x: 0, y: 0, vx: 0, vy: 0, delay: 0, life: 0, max: 1, size: 1, grow: 0, rot: 0, vr: 0, gravity: 0, drag: 0, color: '#000', x2: 0, y2: 0 });
+    }
+    for (let i = 0; i < EMITTERS; i++) {
+      this.emitters.push({ kind: 'fuse', active: false, x: 0, y: 0, delay: 0, life: 0, max: 0, acc: 0, rate: 0, scale: 1, follow: null });
     }
     this.spr = {
       smoke: sprite(96, [
@@ -127,6 +163,12 @@ export class FxLayer {
         [0.45, 'rgba(226,110,40,0.8)'],
         [1, 'rgba(180,60,20,0)'],
       ]),
+      scorch: sprite(96, [
+        [0, 'rgba(22,12,6,0.78)'],
+        [0.45, 'rgba(36,20,10,0.5)'],
+        [0.8, 'rgba(48,28,14,0.16)'],
+        [1, 'rgba(48,28,14,0)'],
+      ]),
     };
   }
 
@@ -149,6 +191,7 @@ export class FxLayer {
       this.stats.push(elapsed);
       const dt = Math.min(elapsed, 100);
       for (const d of this.drawables) d.update(dt);
+      this.emit(dt / 1000);
       this.step(dt / 1000);
       this.draw();
       this.raf = requestAnimationFrame(loop);
@@ -183,7 +226,7 @@ export class FxLayer {
 
   // ------------------------------------------------------------ effects
 
-  /** Gold flecks + a glint when a bounty is found. */
+  /** Gold flecks, a glint and a thin brass ring when a bounty is found. */
   gold(x: number, y: number, scale = 1): void {
     const n = this.reducedMotion ? 4 : Math.round(22 * scale);
     for (let i = 0; i < n; i++) {
@@ -192,6 +235,7 @@ export class FxLayer {
       this.spawn('fleck', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 80, rnd(0.6, 1.1), rnd(2, 5), { gravity: 520, drag: 1.6, color: Math.random() < 0.6 ? FRONTIER.gold : FRONTIER.brassLight });
     }
     this.spawn('glint', x, y, 0, 0, 0.35, 46 * scale);
+    if (!this.reducedMotion) this.spawn('brassRing', x, y, 0, 0, 0.42, 18 * scale, { grow: 150 * scale });
   }
 
   /** Muzzle flash, gun smoke, sparks and an ejected brass casing. `angle` is the barrel direction. */
@@ -199,16 +243,16 @@ export class FxLayer {
     this.spawn('muzzle', x, y, 0, 0, 0.075, 26 * scale, { rot: angle });
     this.spawn('flash', x, y, 0, 0, 0.09, 70 * scale);
     if (this.reducedMotion) return;
-    for (let i = 0; i < 3; i++) {
-      this.spawn('smoke', x + Math.cos(angle) * 6, y + Math.sin(angle) * 6, Math.cos(angle) * rnd(20, 50) + rnd(-8, 8), Math.sin(angle) * rnd(20, 50) - rnd(10, 25), rnd(0.6, 0.9), rnd(8, 14) * scale, {
-        grow: 26 * scale,
-        drag: 1.4,
+    for (let i = 0; i < 4; i++) {
+      this.spawn('smoke', x + Math.cos(angle) * 6, y + Math.sin(angle) * 6, Math.cos(angle) * rnd(30, 70) + rnd(-8, 8), Math.sin(angle) * rnd(30, 70) - rnd(10, 25), rnd(0.6, 1), rnd(8, 14) * scale, {
+        grow: 30 * scale,
+        drag: 1.6,
         delay: i * 0.02,
       });
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const a = angle + rnd(-0.35, 0.35);
-      const sp = rnd(260, 480);
+      const sp = rnd(260, 520);
       this.spawn('spark', x, y, Math.cos(a) * sp, Math.sin(a) * sp, rnd(0.06, 0.14), rnd(5, 9) * scale, { drag: 4, color: FRONTIER.brassLight });
     }
     // casing ejects up and back from the cylinder
@@ -217,6 +261,12 @@ export class FxLayer {
       vr: rnd(-18, 18),
       color: FRONTIER.brass,
     });
+  }
+
+  /** A thin curl of smoke that keeps rising from the barrel after a shot, following the gun. */
+  barrelWisp(follow: Follow, seconds: number, scale = 1): void {
+    if (this.reducedMotion) return;
+    this.addEmitter('wisp', 0, 0, seconds, 16, scale, 0.05, follow);
   }
 
   /** Bullet tracer from the muzzle to the target; travel time in seconds. */
@@ -232,22 +282,54 @@ export class FxLayer {
       const a = rnd(0, Math.PI * 2);
       this.spawn('dust', x, y, Math.cos(a) * rnd(30, 80), Math.sin(a) * rnd(20, 60) - 20, rnd(0.45, 0.8), rnd(10, 18) * scale, { grow: 40 * scale, drag: 2.2 });
     }
-    for (let i = 0; i < 10 * k; i++) {
+    for (let i = 0; i < 9 * k; i++) {
       const a = rnd(-Math.PI, 0);
       this.spawn('chunk', x, y, Math.cos(a) * rnd(80, 220), Math.sin(a) * rnd(120, 260), rnd(0.4, 0.7), rnd(2, 4.5) * scale, { gravity: 900, drag: 1, vr: rnd(-20, 20), color: Math.random() < 0.5 ? FRONTIER.timber : '#a87a4c' });
+    }
+    for (let i = 0; i < 3 * k; i++) {
+      const a = rnd(-Math.PI * 0.9, -Math.PI * 0.1);
+      this.spawn('splinter', x, y, Math.cos(a) * rnd(120, 240), Math.sin(a) * rnd(160, 280), rnd(0.45, 0.7), rnd(5, 8) * scale, { gravity: 900, drag: 0.8, vr: rnd(-26, 26), color: '#c89a62' });
     }
     this.spawn('glint', x, y, 0, 0, 0.12, 22 * scale);
   }
 
+  /** The lit fuse sputters: sparks spit up and a thread of smoke, starting once the face shows. */
+  fuse(x: number, y: number, seconds: number, delay: number, scale = 1): void {
+    this.addEmitter('fuse', x, y, seconds, this.reducedMotion ? 6 : 46, scale, delay, null);
+  }
+
+  /** Boot-scuff dust when the marshal plants or slides a foot. `dir` = −1 kicks back, +1 forward. */
+  footDust(x: number, y: number, dir: number, scale = 1): void {
+    const n = this.reducedMotion ? 1 : 7;
+    for (let i = 0; i < n; i++) {
+      this.spawn('dust', x + rnd(-6, 6) * scale, y - rnd(0, 4) * scale, dir * rnd(30, 110) * scale, -rnd(10, 50) * scale, rnd(0.5, 0.9), rnd(8, 14) * scale, { grow: 34 * scale, drag: 2.4 });
+    }
+  }
+
+  /** Dust beaten out of the duster. */
+  coatDust(x: number, y: number, scale = 1): void {
+    const n = this.reducedMotion ? 1 : 6;
+    for (let i = 0; i < n; i++) {
+      this.spawn('dust', x + rnd(-8, 8) * scale, y + rnd(-10, 10) * scale, rnd(-40, 20) * scale, rnd(-30, 10) * scale, rnd(0.5, 0.9), rnd(6, 11) * scale, { grow: 26 * scale, drag: 2.6 });
+    }
+  }
+
   /**
-   * Layered dynamite BOOM: white-hot flash → fireball → shockwave ring → sparks and embers →
-   * flying debris → billowing smoke that rises and thins → slow drifting ash.
+   * Layered dynamite BOOM: heat veil + white-hot flash → fireball and fire tongues → two shockwave rings →
+   * sparks and embers → splinters, clods and debris → scorch under it all → billowing smoke that rises and
+   * thins → a smouldering crater → slow drifting ash.
    */
   blast(x: number, y: number, scale = 1): void {
     const k = this.reducedMotion ? 0.25 : 1;
+    this.spawn('scorch', x, y, 0, 0, 4.5, 150 * scale);
     this.spawn('flash', x, y, 0, 0, 0.18, 300 * scale);
+    if (!this.reducedMotion) this.spawn('veil', 0, 0, 0, 0, 0.22, 1);
     for (let i = 0; i < Math.max(1, 6 * k); i++) {
       this.spawn('fire', x + rnd(-10, 10) * scale, y + rnd(-10, 10) * scale, rnd(-30, 30), rnd(-60, -10), rnd(0.34, 0.55), rnd(34, 52) * scale, { grow: rnd(180, 280) * scale, drag: 2.5, delay: i * 0.012 });
+    }
+    for (let i = 0; i < 4 * k; i++) {
+      // fire tongues licking upward after the core
+      this.spawn('fire', x + rnd(-18, 18) * scale, y, rnd(-40, 40), rnd(-260, -160) * scale, rnd(0.22, 0.34), rnd(18, 26) * scale, { grow: 60 * scale, drag: 3, delay: rnd(0.04, 0.09) });
     }
     if (!this.reducedMotion) {
       this.spawn('ring', x, y, 0, 0, 0.42, 12 * scale, { grow: 560 * scale });
@@ -258,12 +340,22 @@ export class FxLayer {
       const sp = rnd(380, 720) * scale;
       this.spawn('spark', x, y, Math.cos(a) * sp, Math.sin(a) * sp, rnd(0.1, 0.22), rnd(8, 14) * scale, { drag: 3, color: '#ffd28a' });
     }
-    for (let i = 0; i < 26 * k * scale; i++) {
+    for (let i = 0; i < 22 * k * scale; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 140 + Math.random() * 340 * scale;
       this.spawn('chunk', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 140, rnd(0.9, 1.5), rnd(3, 8), { gravity: 900, drag: 1.1, vr: rnd(-14, 14), color: Math.random() < 0.5 ? FRONTIER.timber : FRONTIER.iron });
     }
-    for (let i = 0; i < 26 * k; i++) {
+    for (let i = 0; i < 10 * k; i++) {
+      const a = rnd(-Math.PI, 0);
+      const sp = rnd(260, 560) * scale;
+      this.spawn('splinter', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 80, rnd(0.8, 1.3), rnd(8, 14) * scale, { gravity: 860, drag: 0.9, vr: rnd(-22, 22), color: Math.random() < 0.5 ? '#a87a4c' : '#7a5232' });
+    }
+    for (let i = 0; i < 8 * k; i++) {
+      const a = rnd(-Math.PI * 0.85, -Math.PI * 0.15);
+      const sp = rnd(160, 340) * scale;
+      this.spawn('clod', x, y, Math.cos(a) * sp, Math.sin(a) * sp, rnd(0.9, 1.3), rnd(4, 7) * scale, { gravity: 1100, drag: 0.6, vr: rnd(-6, 6), color: '#3b2a1c' });
+    }
+    for (let i = 0; i < 24 * k; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = rnd(60, 260);
       this.spawn('ember', x, y, Math.cos(a) * sp, Math.sin(a) * sp - 120, rnd(0.9, 1.8), rnd(3, 6), { gravity: 120, drag: 1.6, delay: rnd(0, 0.08) });
@@ -275,16 +367,25 @@ export class FxLayer {
         delay: rnd(0.04, 0.2),
       });
     }
-    for (let i = 0; i < 22 * k; i++) {
+    for (let i = 0; i < 20 * k; i++) {
       this.spawn('ash', x + rnd(-140, 140) * scale, y - rnd(40, 160) * scale, rnd(-12, 12), rnd(14, 36), rnd(2.2, 3.4), rnd(1.2, 2.4), { delay: rnd(0.35, 1.2), vr: rnd(-3, 3) });
     }
+    if (!this.reducedMotion) this.addEmitter('crater', x, y, 1.8, 9, scale, 0.35, null);
   }
 
-  /** Coins raining from the top edge of a rectangle (cash-out). */
-  coins(x: number, y: number, width: number): void {
+  /** Coins raining from the top edge of a rectangle (cash-out); they bounce once on `floorY` and settle. */
+  coins(x: number, y: number, width: number, floorY: number): void {
     const n = this.reducedMotion ? 6 : 46;
     for (let i = 0; i < n; i++) {
-      this.spawn('coin', x + Math.random() * width, y - Math.random() * 40, rnd(-30, 30), rnd(40, 160), rnd(1.4, 2.2), rnd(5, 8), { gravity: 640, drag: 0.2, vr: rnd(-8, 8), color: FRONTIER.gold });
+      this.spawn('coin', x + Math.random() * width, y - Math.random() * 40, rnd(-30, 30), rnd(40, 160), rnd(1.5, 2.3), rnd(5, 8), {
+        gravity: 640,
+        drag: 0.2,
+        vr: rnd(-8, 8),
+        color: FRONTIER.gold,
+        x2: 1,
+        y2: floorY - rnd(0, 24),
+        delay: rnd(0, 0.25),
+      });
     }
   }
 
@@ -293,6 +394,58 @@ export class FxLayer {
   }
 
   // ------------------------------------------------------------ simulation
+
+  private addEmitter(kind: EmitterKind, x: number, y: number, seconds: number, rate: number, scale: number, delay: number, follow: Follow | null): void {
+    const e = this.emitters.find((q) => !q.active) ?? this.emitters.reduce((a, b) => (a.life < b.life ? a : b));
+    e.kind = kind;
+    e.active = true;
+    e.x = x;
+    e.y = y;
+    e.life = seconds;
+    e.max = seconds;
+    e.rate = rate;
+    e.scale = scale;
+    e.delay = delay;
+    e.acc = 0;
+    e.follow = follow;
+  }
+
+  private emit(dt: number): void {
+    for (const e of this.emitters) {
+      if (!e.active) continue;
+      if (e.delay > 0) {
+        e.delay -= dt;
+        continue;
+      }
+      e.life -= dt;
+      if (e.life <= 0) {
+        e.active = false;
+        e.follow = null;
+        continue;
+      }
+      if (e.follow) {
+        if (!e.follow(this.at)) continue;
+        e.x = this.at.x;
+        e.y = this.at.y;
+      }
+      const fade = e.life / e.max;
+      e.acc += dt * e.rate * (0.4 + 0.6 * fade);
+      const s = e.scale;
+      while (e.acc >= 1) {
+        e.acc -= 1;
+        if (e.kind === 'fuse') {
+          const a = rnd(-Math.PI * 0.95, -Math.PI * 0.05);
+          const sp = rnd(70, 190) * s;
+          this.spawn('spark', e.x, e.y, Math.cos(a) * sp, Math.sin(a) * sp, rnd(0.08, 0.18), rnd(3, 6) * s, { drag: 2.5, gravity: 300, color: Math.random() < 0.5 ? '#ffd28a' : '#f0a040' });
+          if (Math.random() < 0.18) this.spawn('wisp', e.x, e.y, rnd(-6, 6), -rnd(18, 34), rnd(0.5, 0.8), rnd(3, 5) * s, { grow: 14 * s, drag: 1 });
+        } else if (e.kind === 'crater') {
+          this.spawn('smoke', e.x + rnd(-16, 16) * s, e.y + rnd(-6, 6) * s, rnd(-10, 10), -rnd(24, 48), rnd(1.4, 2.2), rnd(20, 32) * s, { grow: 40 * s, drag: 0.6 });
+        } else {
+          this.spawn('wisp', e.x, e.y, rnd(-5, 5), -rnd(16, 30), rnd(0.5, 0.9), rnd(2.5, 4) * s, { grow: 12 * s, drag: 0.9, vr: rnd(-2, 2) });
+        }
+      }
+    }
+  }
 
   private spawn(
     kind: Kind,
@@ -304,8 +457,17 @@ export class FxLayer {
     size: number,
     o: Partial<Pick<Particle, 'gravity' | 'drag' | 'color' | 'grow' | 'delay' | 'rot' | 'vr' | 'x2' | 'y2'>> = {},
   ): void {
-    const p = this.pool.find((q) => q.life <= 0);
-    if (!p) return; // pool full: drop the effect rather than allocate (bounded cost)
+    // Rolling cursor: free slots are found in amortised O(1); a full pool drops the spawn (bounded cost).
+    let p: Particle | undefined;
+    for (let n = 0; n < FX_POOL; n++) {
+      const q = this.pool[(this.cursor + n) % FX_POOL];
+      if (q && q.life <= 0) {
+        p = q;
+        this.cursor = (this.cursor + n + 1) % FX_POOL;
+        break;
+      }
+    }
+    if (!p) return;
     p.kind = kind;
     p.x = x;
     p.y = y;
@@ -378,8 +540,24 @@ export class FxLayer {
       p.y += p.vy * dt;
       p.rot += p.vr * dt;
       p.size += p.grow * dt;
-      if (p.kind === 'fire' || p.kind === 'ring') p.grow *= Math.max(0, 1 - 3.2 * dt); // decelerating expansion
-      if (p.kind === 'ash') p.vx += Math.sin(p.rot * 3) * 10 * dt; // flutter
+      if (p.kind === 'fire' || p.kind === 'ring' || p.kind === 'brassRing') p.grow *= Math.max(0, 1 - 3.2 * dt); // decelerating expansion
+      else if (p.kind === 'ash' || p.kind === 'wisp') p.vx += Math.sin(p.rot * 3) * (p.kind === 'ash' ? 10 : 14) * dt; // flutter / curl
+      else if (p.kind === 'coin' && p.y > p.y2 && p.vy > 0) {
+        if (p.x2 > 0) {
+          // one bounce with spin bleed, then settle and fade
+          p.y = p.y2;
+          p.vy *= -0.36;
+          p.vx *= 0.5;
+          p.vr *= 0.5;
+          p.x2 = 0;
+          p.life = Math.min(p.life, 0.55);
+        } else {
+          p.y = p.y2;
+          p.vy = 0;
+          p.vx *= 0.8;
+          p.gravity = 0;
+        }
+      }
     }
     this.activeCount = active;
   }
@@ -391,13 +569,21 @@ export class FxLayer {
     g.clearRect(0, 0, this.w, this.h);
     g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
+    // Scorch sits under the character and everything else.
+    for (const p of this.pool) {
+      if (p.kind !== 'scorch' || p.life <= 0 || p.delay > 0) continue;
+      const t = p.life / p.max;
+      g.globalAlpha = Math.min(1, t * 2.5) * 0.85;
+      g.drawImage(this.spr.scorch, p.x - p.size / 2, p.y - p.size * 0.42, p.size, p.size * 0.84);
+    }
+    g.globalAlpha = 1;
     for (const d of this.drawables) {
       g.save();
       d.draw(g);
       g.restore();
     }
     for (const p of this.pool) {
-      if (p.life <= 0 || p.delay > 0) continue;
+      if (p.life <= 0 || p.delay > 0 || p.kind === 'scorch') continue;
       const t = p.kind === 'mote' ? 1 : Math.max(0, p.life / p.max); // 1 → 0 over life
       const age = 1 - t;
       switch (p.kind) {
@@ -409,6 +595,10 @@ export class FxLayer {
         case 'smoke':
           // dark and dense early, thinning grey later
           g.globalAlpha = Math.min(1, age * 6) * t * 0.85;
+          g.drawImage(this.spr.smoke, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+          break;
+        case 'wisp':
+          g.globalAlpha = Math.min(1, age * 5) * t * 0.5;
           g.drawImage(this.spr.smoke, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
           break;
         case 'dust':
@@ -425,6 +615,12 @@ export class FxLayer {
           g.drawImage(this.spr.flash, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
           g.globalCompositeOperation = 'source-over';
           break;
+        case 'veil':
+          // a warm wash over the whole stage for a few frames: the blast lights the room
+          g.globalAlpha = t * t * t * 0.32;
+          g.fillStyle = '#ffd9a0';
+          g.fillRect(0, 0, this.w, this.h);
+          break;
         case 'fire':
           g.globalCompositeOperation = 'lighter';
           g.globalAlpha = Math.min(1, t * 1.6) * 0.9;
@@ -435,6 +631,14 @@ export class FxLayer {
           g.globalAlpha = t * 0.75;
           g.strokeStyle = '#f3dcae';
           g.lineWidth = 1 + 7 * t;
+          g.beginPath();
+          g.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          g.stroke();
+          break;
+        case 'brassRing':
+          g.globalAlpha = t * 0.8;
+          g.strokeStyle = FRONTIER.brassLight;
+          g.lineWidth = 1 + 2.5 * t;
           g.beginPath();
           g.arc(p.x, p.y, p.size, 0, Math.PI * 2);
           g.stroke();
@@ -520,11 +724,31 @@ export class FxLayer {
           g.fillRect(-p.size, -p.size * 0.45, p.size * 2, p.size * 0.9);
           g.restore();
           break;
-        case 'coin':
+        case 'splinter':
+          // long, thin plank shard tumbling end over end
           g.globalAlpha = Math.min(1, t * 2);
           g.save();
           g.translate(p.x, p.y);
-          g.scale(Math.abs(Math.cos(p.rot)) * 0.9 + 0.1, 1);
+          g.rotate(p.rot);
+          g.fillStyle = p.color;
+          g.fillRect(-p.size / 2, -1, p.size, 2);
+          g.fillStyle = 'rgba(0,0,0,0.3)';
+          g.fillRect(-p.size / 2, 0.4, p.size, 0.8);
+          g.restore();
+          break;
+        case 'clod':
+          g.globalAlpha = Math.min(1, t * 2);
+          g.fillStyle = p.color;
+          g.beginPath();
+          g.ellipse(p.x, p.y, p.size * 0.6, p.size * 0.48, p.rot, 0, Math.PI * 2);
+          g.fill();
+          break;
+        case 'coin': {
+          g.globalAlpha = Math.min(1, t * 2);
+          g.save();
+          g.translate(p.x, p.y);
+          const face = Math.abs(Math.cos(p.rot)) * 0.9 + 0.1;
+          g.scale(face, 1);
           g.fillStyle = FRONTIER.gold;
           g.beginPath();
           g.arc(0, 0, p.size, 0, Math.PI * 2);
@@ -532,8 +756,13 @@ export class FxLayer {
           g.strokeStyle = FRONTIER.leather;
           g.lineWidth = 1;
           g.stroke();
+          if (face > 0.6) {
+            g.fillStyle = FRONTIER.brassLight;
+            g.fillRect(-p.size * 0.5, -p.size * 0.5, p.size * 0.4, p.size * 0.25);
+          }
           g.restore();
           break;
+        }
         default:
           g.globalAlpha = Math.min(1, t * 1.5);
           g.save();

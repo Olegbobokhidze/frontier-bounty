@@ -20,7 +20,7 @@ export type Framing =
 
 const HAT_TOP = -236;
 const FULL_SPAN = 244; // hat top to just below the boots
-const BUST_BOTTOM = -86; // belt line
+const BUST_BOTTOM = -118; // mid-chest: a tight 'cowboy close-up' so the face reads in a short strip
 /** Local x extent the full-body frame must contain: knock-back stagger behind, aimed revolver in front. */
 export const FULL_LEFT = 78;
 export const FULL_RIGHT = 98;
@@ -42,7 +42,7 @@ export function frameCharacter(slot: Rect | null): Framing {
       aimMax: 1.05,
     };
   }
-  const span = BUST_BOTTOM - HAT_TOP; // 150 units
+  const span = BUST_BOTTOM - HAT_TOP; // 118 units
   const scale = Math.min((slot.h * 0.98) / span, (slot.w * 0.8) / 170);
   return {
     mode: 'bust',
@@ -51,7 +51,8 @@ export function frameCharacter(slot: Rect | null): Framing {
     originY: slot.y + 2 - HAT_TOP * scale,
     clip: slot,
     aimMin: -0.5,
-    aimMax: 0.55,
+    // In a strip above the board the claims sit below him: the arm may angle down out of the strip.
+    aimMax: 0.85,
   };
 }
 

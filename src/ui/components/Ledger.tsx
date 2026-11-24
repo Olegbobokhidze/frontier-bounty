@@ -3,12 +3,14 @@ import { TERRITORY_PRESETS, presetFor } from '../../config/presets';
 import { formatMultiplier } from '../../core/money';
 import { currentSafeChance, RoundState } from '../../engine/bounty/machine';
 import { multiplierAt, payout } from '../../engine/bounty/math';
-import { useGame, useRound } from '../hooks/game';
+import { useGame, usePrefersReducedMotion, useRound } from '../hooks/game';
+import { useCountUp } from '../hooks/motion';
 import { IconMinus, IconPlus, IconSpur } from './icons';
 
 export function Ledger() {
   const { controller, formatMoney } = useGame();
   const ctx = useRound();
+  const reducedMotion = usePrefersReducedMotion();
   const rules = controller.rules;
   const s = ctx.state;
   const between = s === RoundState.IDLE || s === RoundState.ROUND_OVER_WIN || s === RoundState.ROUND_OVER_BUST;
@@ -20,6 +22,8 @@ export function Ledger() {
   const betIndex = rules.betPresets.indexOf(ctx.params.bet);
   const preset = presetFor(ctx.params.rows, ctx.params.cols, ctx.params.hazards);
   const sizes = [...new Set(TERRITORY_PRESETS.map((t) => `${t.rows}x${t.cols}`))];
+  // A cash-out counts up into the purse; stakes and refunds snap.
+  const purse = useCountUp(ctx.balance, s === RoundState.ROUND_OVER_WIN && !reducedMotion);
 
   const primary = (() => {
     switch (s) {
@@ -44,7 +48,10 @@ export function Ledger() {
     <section className="ledger" aria-label="Wager controls">
       <div className="ledger__row ledger__purse">
         <span className="label">Purse</span>
-        <output className="figure" aria-live="polite">
+        <span className={`figure ${purse.counting ? 'is-counting' : ''}`} aria-hidden="true">
+          {formatMoney(purse.shown)}
+        </span>
+        <output className="sr-only" aria-live="polite">
           {formatMoney(ctx.balance)}
         </output>
       </div>
@@ -129,7 +136,9 @@ export function Ledger() {
       <dl className="odds">
         <div>
           <dt>Current</dt>
-          <dd>{formatMultiplier(current)}</dd>
+          <dd key={current} className={picks > 0 ? 'is-bumped' : undefined}>
+            {formatMultiplier(current)}
+          </dd>
         </div>
         <div>
           <dt>Next claim</dt>
