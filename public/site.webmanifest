@@ -1,0 +1,39 @@
+{
+  "name": "Frontier Dynamite & Bounty · Western Grid Game",
+  "short_name": "Frontier Bounty",
+  "description": "Stake a claim, dodge the dynamite and cash out before the fuse blows. A Western grid game with adjustable boards, four risk levels and a living marshal.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#2a1a10",
+  "theme_color": "#2a1a10",
+  "lang": "en",
+  "categories": [
+    "games",
+    "entertainment"
+  ],
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

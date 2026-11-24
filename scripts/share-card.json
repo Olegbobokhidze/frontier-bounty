@@ -1,0 +1,48 @@
+{
+  "publicDir": "public",
+  "devUrl": "http://localhost:5174/",
+  "shot": {
+    "viewport": [
+      1440,
+      810
+    ],
+    "dpr": 2,
+    "query": "./",
+    "waitMs": 2500
+  },
+  "icon": {
+    "bg": "#2a1a10",
+    "applePad": 0
+  },
+  "card": {
+    "bg": "#29190d",
+    "ink": "#EFE2C4",
+    "muted": "#B89C7A",
+    "accent": "#E3B23C",
+    "backdrop": "repeating-linear-gradient(90deg, rgba(0,0,0,0.20) 0 2px, transparent 2px 148px), linear-gradient(180deg, #2d1b0e, #25170c)",
+    "fontsHref": "https://fonts.googleapis.com/css2?family=Rye&family=Bitter:wght@400;500;600;700&display=swap",
+    "bodyFont": "'Bitter', Georgia, serif",
+    "displayFont": "'Rye', Georgia, serif",
+    "titleShadow": "0 2px 0 rgba(0,0,0,0.45)",
+    "eyebrow": "Western grid game",
+    "title": "Frontier Dynamite & Bounty",
+    "titleSize": 56,
+    "titleLineHeight": 64,
+    "tagline": "Stake a claim, dodge the dynamite and cash out before the fuse blows.",
+    "features": [
+      "Pick your territory and how much dynamite",
+      "Four risk levels, Greenhorn to Outlaw",
+      "A living marshal and a rising multiplier ladder"
+    ],
+    "panelWidth": 660,
+    "crop": {
+      "x": 34,
+      "y": 84,
+      "w": 771,
+      "h": 687
+    },
+    "fadeX": 260,
+    "fadeY": 40,
+    "author": "Oleg Bobokhidze"
+  }
+}
