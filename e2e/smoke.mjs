@@ -180,6 +180,17 @@ await startRound();
 await setPeek(true);
 const hz6 = await hazards();
 const safe6 = (await hiddenCells()).filter((c) => !hz6.includes(c));
+{
+  const el6 = await page.$(`.cell[data-cell="${safe6[0]}"]`);
+  const b6 = await el6.boundingBox();
+  await page.mouse.move(b6.x + b6.width / 2, b6.y + b6.height / 2, { steps: 4 });
+  await sleep(700);
+  const framing = await page.$eval('[data-testid="scene-framing"]', (e) => e.textContent);
+  const gaze = parseFloat(framing.split('·')[1] ?? '0');
+  check('marshal looks at the targeted claim (gaze follows hover)', gaze > 0.6, framing);
+  const sight = await page.$eval(`.cell[data-cell="${safe6[0]}"] .cell__sight`, (e) => parseFloat(getComputedStyle(e).opacity));
+  check('targeted claim shows the sight brackets', sight > 0.9, `opacity ${sight}`);
+}
 await clickCell(safe6[0]);
 await sleep(110); // response is instant, but the muzzle flash is ~190 ms after the pick
 const early = await page.$eval(`.cell[data-cell="${safe6[0]}"]`, (e) => e.dataset.view);
@@ -196,6 +207,11 @@ const ev2 = await page.$eval('[data-testid="scene-events"]', (e) => e.textConten
 check('dynamite triggers a layered BOOM (scene event + particle burst)', ev2.includes('BOOM') && parts > 60, `${parts} particles · ${ev2.slice(0, 60)}`);
 const clipNow = await page.$eval('[data-testid="scene-clip"]', (e) => e.textContent);
 check('marshal reacts with the flinch clip', clipNow.startsWith('flinch'), clipNow);
+const blastState = await page.evaluate((hit) => ({
+  blasted: document.querySelector(`.cell[data-cell="${hit}"]`)?.classList.contains('is-blasted'),
+  jolted: document.querySelectorAll('.cell.is-jolt').length,
+}), hz6[0]);
+check('BOOM punches the hit lid and jolts its neighbours', blastState.blasted && blastState.jolted >= 2, JSON.stringify(blastState));
 await page.evaluate(() => {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
   const [a, b] = document.querySelectorAll('.inspector .range-pair input');
@@ -206,6 +222,8 @@ await page.evaluate(() => {
 });
 await page.screenshot({ path: `${OUT}/07-boom.png` });
 await sleep(1400); // FX window: fireball, smoke billows, ash
+const clipLater = await page.$eval('[data-testid="scene-clip"]', (e) => e.textContent);
+check('after the blast he recovers (dust off, hat back) before idling', clipLater.startsWith('recover') || clipLater.startsWith('idle'), clipLater);
 const boomPerf = await page.$eval('.perf__stats', (e) => e.textContent);
 const boomFps = await page.$eval('.perf__fps', (e) => parseFloat(e.textContent));
 if (GPU) check('frame rate holds through the BOOM window (≥ 50 fps)', boomFps >= 50, `${boomFps} fps · ${boomPerf}`);
@@ -261,9 +279,15 @@ for (const [name, vp] of [
     const minCell = Math.min(...cells.map((c) => c.width));
     const led = document.querySelector('.ledger');
     const ledgerClipped = led.scrollWidth - led.clientWidth;
-    return { overflow, ledgerClipped, primaryVisible: prim.bottom <= innerHeight && prim.right <= innerWidth && prim.height > 0, cellsInside, overlap, minCell: Math.round(minCell) };
+    const stage = document.querySelector('.stage');
+    const st = stage.getBoundingClientRect();
+    const posse = document.querySelector('.posse');
+    const pr = posse.getBoundingClientRect();
+    const posseShown = posse.dataset.hidden !== 'true';
+    const posseOk = !posseShown || (pr.left >= st.left - 1 && pr.right <= st.right + 1 && pr.top >= st.top - 1 && pr.bottom <= st.bottom + 1 && cells.every((c) => c.right <= pr.left + 1 || c.left >= pr.right - 1 || c.bottom <= pr.top + 1 || c.top >= pr.bottom - 1));
+    return { overflow, ledgerClipped, primaryVisible: prim.bottom <= innerHeight && prim.right <= innerWidth && prim.height > 0, cellsInside, overlap, minCell: Math.round(minCell), stage: stage.dataset.arrangement, posseOk };
   });
-  check(`${name}: no overflow, board+ledger fit, CTA visible, cells ≥ 40px`, r.overflow === 0 && r.ledgerClipped === 0 && r.primaryVisible && r.cellsInside && !r.overlap && r.minCell >= 40, JSON.stringify(r));
+  check(`${name}: no overflow, board+ledger fit, CTA visible, cells ≥ 40px, marshal clear of the board`, r.overflow === 0 && r.ledgerClipped === 0 && r.primaryVisible && r.cellsInside && !r.overlap && r.minCell >= 40 && r.posseOk, JSON.stringify(r));
   await page.screenshot({ path: `${OUT}/layout-${name}.png` });
 }
 

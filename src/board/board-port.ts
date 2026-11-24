@@ -18,7 +18,7 @@ export function createBoardPort(scene: Scene, reducedMotion: boolean): BoardPort
       await scene.whenImpact(cell);
       const t = revealTimings(turbo, reducedMotion);
       const ms = outcome === 'safe' ? t.safe : t.hazard;
-      if (outcome === 'hazard') scene.lightFuse(cell);
+      if (outcome === 'hazard') scene.lightFuse(cell, ms);
       setTimeout(() => (outcome === 'safe' ? scene.revealSafe(cell) : scene.boom(cell)), ms * 0.45);
       await wait(ms);
     },

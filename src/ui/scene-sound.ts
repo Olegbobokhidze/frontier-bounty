@@ -29,6 +29,12 @@ export function bindSceneSound(scene: Scene, sound: FrontierSound): () => void {
       case 'holster':
         sound.play(Cue.HOLSTER);
         break;
+      case 'hat':
+        sound.play(Cue.TAP, { pitch: 0.8 }); // a slap on the felt as the hat goes back on
+        break;
+      case 'catch':
+        sound.play(Cue.TAP, { pitch: 1.2 }); // the purse lands back in the glove
+        break;
       case 'collect':
         streak = 0;
         sound.play(Cue.CASHOUT);

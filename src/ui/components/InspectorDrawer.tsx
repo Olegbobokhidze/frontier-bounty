@@ -311,7 +311,7 @@ function SceneSection() {
   const W = 280;
   const H = 44;
   const pts = samples.map((v, i) => `${(i / Math.max(1, samples.length - 1)) * W},${H - (Math.min(v, 50) / 50) * H}`).join(' ');
-  const previews = ['shoot', 'celebrate', 'boom', 'collect', 'idle'] as const;
+  const previews = ['shoot', 'celebrate', 'celebrateBig', 'alarm', 'boom', 'recover', 'collect', 'fidgetHat', 'fidgetLook', 'idle'] as const;
   return (
     <section className="insp">
       <h3 className="insp__title">Character & FX · Marshal Silas Kane</h3>
@@ -323,12 +323,14 @@ function SceneSection() {
           </dd>
         </div>
         <div>
-          <dt>framing</dt>
-          <dd>{debug?.framing ?? '—'}</dd>
+          <dt>framing · gaze</dt>
+          <dd data-testid="scene-framing">{debug ? `${debug.framing} · ${debug.gaze.toFixed(2)}` : '—'}</dd>
         </div>
         <div>
           <dt>live particles</dt>
-          <dd data-testid="scene-particles">{debug?.particles ?? 0} / 520</dd>
+          <dd data-testid="scene-particles">
+            {debug?.particles ?? 0} / {debug?.pool ?? 0}
+          </dd>
         </div>
         <div>
           <dt>scene events</dt>

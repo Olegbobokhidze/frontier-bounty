@@ -22,7 +22,7 @@ adapters/  MockProvider (provably fair, latency/faults, idempotent), HttpProvide
 config/    territory presets, game-mode registry (Plinko registered as "planned"), palette, timings
 audio/     synthesized wood / brass / fuse / blast / register cues, safe fallback
 board/     DOM grid from GridLayout + Canvas 2D FX layer, BoardPort (animation gating)
-  scene/   Marshal Silas Kane: keyframed + procedural character animation, FK rig, shot/impact/BOOM FX (ADR-0006)
+  scene/   Marshal Silas Kane: keyframed + procedural character animation, FK/IK rig, gaze, shot/impact/BOOM FX (ADR-0006/0007)
 ui/        ledger HUD, ladder, posters, rules, Provider Inspector, App composition
 ```
 
@@ -38,10 +38,17 @@ Lower layers never import upper ones. ESLint enforces this, and also bans `enum`
 
 ### Character & FX
 
-A procedurally drawn gunslinger (no image assets) idles with breathing, weight shift and glances. On a pick he draws,
-aims at the exact cell, fires (muzzle flash, tracer, shell casing), and the lid flips only when the bullet lands. A bounty gets a
-nod, a revolver twirl and a holster. Dynamite triggers a layered BOOM (flash, fireball, shockwave, embers, debris, smoke, ash and a
-camera shake), and the marshal flinches and recovers. Cashing out raises the purse. Inspector → *Character & FX* previews every clip.
+A procedurally drawn gunslinger (no image assets) breathes, shifts his weight and, left alone, tugs his hat brim or squints
+down the street. He watches the claim you hover or focus: eyes first, then the head, and the barrel too once his gun is up.
+Brass sight brackets close in on that lid. On a pick he cocks, draws and aims at the exact cell, then fires (muzzle flash,
+tracer, shell casing, a curl of barrel smoke). The lid flips only when the bullet lands, and the badge is stamped on as it lands.
+A bounty gets a nod and a twirl into the holster, and every third claim in a row earns a double twirl and a tip of the hat.
+A lit fuse sputters and rattles its lid while his eyes go wide. Then the BOOM: a heat flash, fireball, shockwaves, splinters,
+clods, embers, scorch, smoke and a smouldering crater. Neighbouring lids are kicked away, the camera shakes, and he is thrown
+back for a beat of hit-stop. He dusts off his duster, slaps his hat back on and glares at the board. The end-of-round sweep
+ripples out from the cell that decided it. Cashing out tosses the purse, rains coins that bounce on the board and counts the
+purse up. Where he stands (beside the board, in a strip above it, or off-screen) is computed from the stage size (ADR-0007).
+Inspector → *Character & FX* previews every clip.
 
 ### Provably fair
 
@@ -55,7 +62,7 @@ detected as tampering.
 |---|---|
 | `pnpm dev` | Vite dev server (`--host` to test on a phone over LAN) |
 | `pnpm verify` | typecheck → lint (architecture rules) → tests → production build |
-| `pnpm e2e` | Puppeteer smoke test (40 checks: character beats, gameplay, faults, fairness, perf, 6 viewports). Needs `pnpm dev` running. Env: `BASE_URL`, `CHROME_PATH`, `E2E_GPU=0` |
+| `pnpm e2e` | Puppeteer smoke test (44 checks: character beats, gaze, blast jolt, gameplay, faults, fairness, perf, 6 viewports). Needs `pnpm dev` running. Env: `BASE_URL`, `CHROME_PATH`, `E2E_GPU=0` |
 | `pnpm log:decision -- …` | Append a timestamped decision to `docs/ai/decision-log.jsonl` |
 | `pnpm report:new -- <slug>` | Create a session report from the template |
 
